@@ -43,7 +43,7 @@ TRACKS = {
             (['지역', '비수도권', '지자체'], 1),
         ],
         'core': ['외국인환자', '의료관광', '유치기관', '유치실적', '메디컬코리아', '의료 관광',
-                 'medical tourism', 'health tourism', '환자 유치'],
+                 'medical tourism', 'health tourism', '환자 유치', '외국인 환자', '해외환자', '국제진료', 'medical travel'],
     },
     WEL: {
         'label': '웰니스',
@@ -77,13 +77,21 @@ TRACKS = {
             (['지역', '비수도권', '지자체'], 1),
         ],
         'core': ['웰니스', '치유관광', '산림치유', '해양치유', '템플스테이', '온천', '스파',
-                 'wellness', '명상', '한방'],
+                 'wellness', '명상', '한방', '치유'],
     },
 }
 
 
 def track_of(it):
     return it.get('track') or MED
+
+
+def relevant(it, track=None):
+    """트랙 핵심어가 '제목'에 있는 기사만 분석(헤드라인 · 이슈 순위 · 주제어 · 지역)에 씀
+    (요약까지 보면 웰니스는 거의 모든 기사가 걸려 잡음이 섞임)"""
+    cfg = TRACKS[track or track_of(it)]
+    txt = (it.get('title') or '').lower()
+    return any(k.lower() in txt for k in cfg['core'])
 
 
 def score_item(it, track=None):

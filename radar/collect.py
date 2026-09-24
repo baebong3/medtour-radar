@@ -126,10 +126,91 @@ def from_google(track, url, since):
     return out
 
 
+# ── 잘린 제목 복원 ─────────────────────────────────────────────
+# 네이버 검색 API는 긴 제목을 '...'로 잘라서 줌 → 원문 기사의 og:title 등으로 전체 제목을 되살림
+CUT = re.compile(r'\s*(\.{2,}|…)\s*$')
+
+
+def is_cut(title):
+    return bool(CUT.search(title or ''))
+
+
+def _key(s):
+    return re.sub(r'[^0-9A-Za-z가-힣]', '', html.unescape(s or '')).lower()
+
+
+def _decode(raw, ctype=''):
+    m = re.search(r'charset=([\w-]+)', ctype or '', re.I) or re.search(rb'<meta[^>]+charset=["\']?([\w-]+)', raw[:4000], re.I)
+    enc = (m.group(1).decode() if m and isinstance(m.group(1), bytes) else (m.group(1) if m else '')) or 'utf-8'
+    enc = {'ks_c_5601-1987': 'cp949', 'euc-kr': 'cp949', 'euckr': 'cp949'}.get(enc.lower(), enc)
+    for e in (enc, 'utf-8', 'cp949'):
+        try:
+            return raw.decode(e)
+        except Exception:
+            pass
+    return raw.decode('utf-8', 'ignore')
+
+
+def match_full(cut_title, candidates):
+    """잘린 제목의 앞부분과 이어지는 후보 중 가장 알맞은 전체 제목 (사이트명 꼬리 제거)"""
+    pre = CUT.sub('', cut_title).strip()
+    pk = _key(pre)
+    if len(pk) < 6:
+        return None
+    for c in candidates:
+        c = re.sub(r'\s+', ' ', html.unescape(c or '')).strip()
+        if not c or is_cut(c) or not _key(c).startswith(pk[:max(6, len(pk) - 2)]) or len(_key(c)) <= len(pk):
+            continue
+        # 앞부분 이후에 나오는 사이트명 구분자( | , - , :: , < ) 뒤는 버림
+        cut_at = len(pre) - 2
+        m = re.search(r'\s+(\||::|<|-|–|—|:)\s+[^|]{1,30}$', c[cut_at:])
+        if m:
+            c = c[:cut_at + m.start()].strip()
+        return c if len(_key(c)) > len(pk) else None
+    return None
+
+
+def page_titles(url):
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                                                                 '(KHTML, like Gecko) Chrome/124 Safari/537.36',
+                                                   'Accept-Language': 'ko-KR,ko;q=0.9'})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            doc = _decode(r.read(600000), r.headers.get('Content-Type', ''))
+    except Exception:
+        return []
+    out = []
+    for pat in (r'<meta[^>]+property=["\']og:title["\'][^>]*content=["\']([^"\']+)',
+                r'<meta[^>]+content=["\']([^"\']+)["\'][^>]*property=["\']og:title',
+                r'<meta[^>]+name=["\']twitter:title["\'][^>]*content=["\']([^"\']+)',
+                r'<title[^>]*>(.*?)</title>', r'<h1[^>]*>(.*?)</h1>', r'<h2[^>]*>(.*?)</h2>'):
+        out += [re.sub(r'<[^>]+>', ' ', x) for x in re.findall(pat, doc, re.I | re.S)[:3]]
+    return out
+
+
+def repair_titles(con, limit=250):
+    rows = con.execute("SELECT DISTINCT url, title FROM news WHERE title LIKE '%...' OR title LIKE '%…' "
+                       "ORDER BY date DESC LIMIT ?", (limit,)).fetchall()
+    known = [r[0] for r in con.execute('SELECT DISTINCT title FROM news')]
+    fixed = 0
+    for url, title in rows:
+        full = match_full(title, known)                     # 다른 경로(Google RSS 등)로 들어온 전체 제목이 있으면 우선 사용
+        if not full:
+            full = match_full(title, page_titles(url))
+            time.sleep(0.2)
+        if full:
+            con.execute('UPDATE news SET title=? WHERE url=? AND title=?', (full, url, title))
+            fixed += 1
+    con.commit()
+    left = con.execute("SELECT COUNT(*) FROM news WHERE title LIKE '%...' OR title LIKE '%…'").fetchone()[0]
+    print('잘린 제목 복원 %d건 · 남은 %d건' % (fixed, left))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--days', type=int, default=3)
     ap.add_argument('--seed', help='JSON 파일을 DB에 적재(초기 데이터 · 수작업 보강용)')
+    ap.add_argument('--repair', type=int, default=250, help='한 번에 복원을 시도할 잘린 제목 수(0이면 건너뜀)')
     a = ap.parse_args()
 
     con = db()
@@ -159,6 +240,8 @@ def main():
         total += n
         print('[%s] 후보 %d건 · 신규 적재 %d건' % (track, len(got), n))
     print('합계 신규 %d건 · DB 누적 %d건' % (total, con.execute('SELECT COUNT(*) FROM news').fetchone()[0]))
+    if a.repair:
+        repair_titles(con, a.repair)
 
 
 if __name__ == '__main__':

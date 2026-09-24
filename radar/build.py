@@ -21,9 +21,10 @@ import argparse, html, io, os, re, sqlite3, sys
 from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from rules import TRACKS, KST, MED, WEL, score_item
+from rules import TRACKS, KST, MED, WEL, score_item, relevant
 from media import media_name
 import topic
+import region
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -156,11 +157,52 @@ table.ttab{width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px
 .more:checked~.mbtn .o{display:none}
 .more:checked~.mbtn .c{display:inline}
 
-.cats{display:grid;gap:18px;margin-top:18px}
+.cats{display:grid;gap:18px;margin-top:18px;grid-template-columns:minmax(0,1fr)}
+.grid>*,.cats>*{min-width:0}
+.g2{margin-top:18px}
+
+/* 핵심 이슈 순위 : 제목 전체(줄바꿈) + 막대 끝 수치 */
+.irank{list-style:none;margin:6px 0 0;padding:0}
+.irank li{display:grid;grid-template-columns:26px 1fr;gap:4px 10px;padding:11px 0;border-bottom:1px solid var(--rule2)}
+.irank li:last-child{border-bottom:0}
+.irank .rk{font-size:19px;font-weight:800;color:var(--ac);line-height:1.25;font-variant-numeric:tabular-nums}
+.irank li:not(:first-child) .rk{color:var(--ink)}
+.irank .it{font-size:14.5px;font-weight:700;line-height:1.45;word-break:keep-all}
+.irank .it a:hover{color:var(--ac);text-decoration:underline}
+.irank .tr{grid-column:2;display:flex;align-items:center;gap:8px;margin-top:3px}
+.irank .b{height:12px;background:var(--bar);border-radius:2px}
+.irank li:first-child .b{background:var(--ac)}
+.irank .v{font-size:12.5px;font-weight:800;white-space:nowrap;font-variant-numeric:tabular-nums}
+.irank .v small{font-weight:600;color:var(--muted);font-size:12px}
+
+/* 뜨는 키워드 표 */
+table.kw{width:100%;border-collapse:collapse;font-size:13.5px}
+.kw th{font-size:12px;font-weight:800;padding:8px 6px;border-bottom:2px solid var(--ink);text-align:center;white-space:nowrap}
+.kw th:nth-child(2){text-align:left}
+.kw td{padding:8px 6px;border-bottom:1px solid var(--rule2);font-variant-numeric:tabular-nums}
+.kw td.r{text-align:right;padding-right:22px;width:17%;white-space:nowrap}
+.kw td.rk{color:var(--muted);text-align:center;width:9%}
+.kw td.w{font-weight:700;word-break:keep-all}
+.kw td.up{color:var(--ac-d);font-weight:800}
+.kw tbody tr:last-child td{border-bottom:1px solid var(--rule)}
+
+/* 지역 타일맵 */
+.reg{display:grid;grid-template-columns:minmax(0,380px) 1fr;gap:26px;align-items:start}
+.reg svg{width:100%;height:auto;display:block}
+.reg svg .tn{font-size:13px;font-weight:800;text-anchor:middle;font-family:'PretendardSub','Pretendard',sans-serif}
+.reg svg .tv{font-size:15px;font-weight:800;text-anchor:middle;font-variant-numeric:tabular-nums;font-family:'PretendardSub','Pretendard',sans-serif}
+.rlist{list-style:none;margin:0;padding:0}
+.rlist li{display:grid;grid-template-columns:64px 1fr;gap:10px;padding:10px 0;border-bottom:1px solid var(--rule2)}
+.rlist li:last-child{border-bottom:0}
+.rlist .rn{font-weight:800;font-size:14px}
+.rlist .rn small{display:block;font-size:12px;font-weight:700;color:var(--ac-d);font-variant-numeric:tabular-nums}
+.rlist .tt{font-size:13.5px;font-weight:700;line-height:1.45;word-break:keep-all}
+.rlist .tt a:hover{color:var(--ac);text-decoration:underline}
+.rlist .meta{margin-top:3px}
 .foot{margin:34px 0 0;padding:18px 0 40px;border-top:1px solid var(--rule);font-size:12px;color:var(--muted);display:flex;gap:18px;flex-wrap:wrap;justify-content:space-between}
 .foot b{color:var(--sub)}
 
-@media(max-width:980px){.grid{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(3,1fr)}
+@media(max-width:980px){.grid{grid-template-columns:1fr}.reg{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(3,1fr)}
   .kpi:nth-child(4){border-left:0}.kpi:nth-child(n+4){border-top:1px solid var(--rule2)}}
 @media(max-width:640px){
   .hero h1{font-size:23px}.kv{font-size:26px}
@@ -171,6 +213,7 @@ table.ttab{width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px
   .mast .upd{margin-left:0;text-align:left;width:100%}
   .vr{display:none}.logo{height:28px}
   .card{padding:16px}.lead .tt{font-size:18px}
+  .kw td.r{padding-right:8px}.kw th,.kw td{padding-left:4px;padding-right:4px}
   .tabs{display:flex}.tabs label{flex:1;justify-content:center;padding:9px 10px}
 }
 @media print{.pane{display:block!important}.tabs,.mbtn{display:none}.ttab tr.ex{display:table-row}}
@@ -292,15 +335,16 @@ def summarize(all_items, track, days, today):
     return items, by_cat, top_cat
 
 
-def _short(title, lim=34):
-    """대표 기사 제목을 헤드라인 길이로 줄임 : 말줄임 · 쉼표 앞 첫 마디, 머리 날짜 제거"""
-    s = re.split(r'…|\.\.\.| - |\|', re.sub(r'\[[^\]]*\]|\([^)]*\)', ' ', title))[0].replace(',', ' ')
-    s = re.sub(r'[\"“”‘’\'「」]', '', s)
-    s = re.sub(r'^\s*\d+일\s*', '', s)
-    s = re.sub(r'\s+', ' ', s).strip()
-    if len(s) > lim:
-        s = s[:lim].rsplit(' ', 1)[0]
-    return s
+def _short(title, lim=60):
+    """대표 기사 제목을 헤드라인으로 : 말줄임은 쉼표로 바꾸고, 60자를 넘으면 마디 단위로 줄임(말줄임표 없음)"""
+    segs = topic._seg_title(title)
+    out = ''
+    for sg in segs:
+        nxt = (out + ', ' + sg) if out else sg
+        if len(nxt) > lim and out:
+            break
+        out = nxt
+    return topic._fit(out or title, lim)
 
 
 def headline(all_items, items, track, days, today):
@@ -309,9 +353,10 @@ def headline(all_items, items, track, days, today):
     ov = topic.load_override(ROOT, track, today_s)
     if ov:
         return ov, [], '담당자 지정'
-    pools = [items]
-    if not items:                                   # 이번 기간 기사가 없을 때만 30일로 넓힘
-        pools.append(summarize(all_items, track, 30, today)[0])
+    rel = [r for r in items if relevant(r, track)]
+    pools = [rel]
+    if not rel:                                   # 이번 기간 기사가 없을 때만 30일로 넓힘
+        pools.append([r for r in summarize(all_items, track, 30, today)[0] if relevant(r, track)])
     for pool in pools:
         h, cl = topic.extract(pool)
         strong = h and len(cl) >= 2 and (len(topic.tokens(h)) >= 2 or any(topic.UNIT.match(w) for w in h.split()))
@@ -323,9 +368,72 @@ def headline(all_items, items, track, days, today):
     return TRACKS[track]['label'] + ' 이슈 없음', [], ''
 
 
+def issue_rank(sts):
+    """핵심 이슈 순위 : 기사 묶음별 기사 수 막대 (큰 순, 값은 막대 끝)"""
+    if not sts:
+        return '<p class="note">여러 매체가 함께 다룬 기사 묶음이 아직 없음</p>'
+    sts = sorted(sts, key=lambda s: -len(s[1]))
+    mx = max(len(s[1]) for s in sts)
+    o = '<ol class="irank">'
+    for i, (h, arts, m) in enumerate(sts, 1):
+        r = arts[0]
+        d0, d1 = min(a['date'] for a in arts), max(a['date'] for a in arts)
+        span = d0[5:].replace('-', '.') + ('' if d0 == d1 else '~' + d1[5:].replace('-', '.'))
+        o += ('<li><span class="rk">%d</span><div class="it"><a href="%s" target="_blank" rel="noopener">%s</a></div>'
+              '<div class="tr"><span class="b" style="width:%.1f%%"></span><span class="v">%s건 <small>매체 %s곳 · %s</small></span></div></li>'
+              % (i, esc(r['url']), esc(h), max(len(arts) / mx * 58, 3), fmt(len(arts)), fmt(m), span))
+    return o + '</ol>'
+
+
+def rising_table(rows, n_prev=0, n_now=0):
+    if not rows:
+        return '<p class="note">직전 7일보다 늘어난 주제어가 없음</p>'
+    warn = ('<p class="note">수집 초기라 직전 7일 기사가 %s건뿐이어서, 지금은 증감보다 최근 7일 기사 수로 읽을 것</p>' % fmt(n_prev)
+            if n_prev < max(10, n_now * 0.3) else '')
+    o = ('<table class="kw"><thead><tr><th>순위</th><th>주제어</th><th>최근 7일</th><th>직전 7일</th><th>증감</th></tr></thead><tbody>')
+    for i, (w, n, p) in enumerate(rows, 1):
+        o += ('<tr><td class="rk">%d</td><td class="w">%s</td><td class="r">%s</td><td class="r">%s</td>'
+              '<td class="r up">▲ %s</td></tr>' % (i, esc(re.sub(r'^[a-z]+', lambda m: m.group(0).upper(), w)), fmt(n), fmt(p), fmt(n - p)))
+    return o + '</tbody></table>' + warn
+
+
+def region_card(items, ac_hex):
+    """시도 타일맵(기사 수 농도) + 기사 많은 지역 5곳의 대표 기사"""
+    by = {sd: [] for sd in region.SIDO}
+    for it in items:
+        for sd in region.regions(it['title']):
+            by[sd].append(it)
+    mx = max((len(v) for v in by.values()), default=0) or 1
+    TW, TH, G = 86, 60, 6
+    svg = '<svg viewBox="0 0 %d %d" role="img" aria-label="시도별 기사 수">' % (4 * TW + 3 * G, 5 * TH + 4 * G)
+    for sd, (cx, cy) in region.TILE.items():
+        n = len(by[sd])
+        x, y = cx * (TW + G), cy * (TH + G)
+        if n:
+            op = 0.14 + 0.86 * (n / mx) ** 0.6
+            svg += '<rect x="%d" y="%d" width="%d" height="%d" rx="4" fill="%s" fill-opacity="%.2f"/>' % (x, y, TW, TH, ac_hex, op)
+            col = '#FFFFFF' if op > 0.55 else '#1C1B1B'
+        else:
+            svg += '<rect x="%d" y="%d" width="%d" height="%d" rx="4" fill="#F1EFEC"/>' % (x, y, TW, TH)
+            col = '#A8A5A6'
+        svg += ('<text class="tn" x="%d" y="%d" fill="%s">%s</text><text class="tv" x="%d" y="%d" fill="%s">%s</text>'
+                % (x + TW / 2, y + 25, col, sd, x + TW / 2, y + 46, col, fmt(n)))
+    svg += '</svg>'
+    top = sorted(((sd, v) for sd, v in by.items() if v), key=lambda kv: -len(kv[1]))[:5]
+    li = ''
+    for sd, v in top:
+        r = sorted(v, key=lambda x: (-x['score'], x['date']))[0]
+        li += ('<li><div class="rn">%s<small>%s건</small></div><div><div class="tt"><a href="%s" target="_blank" rel="noopener">%s</a></div>'
+               '<div class="meta">%s · <b>%s</b></div></div></li>'
+               % (sd, fmt(len(v)), esc(r['url']), esc(r['title']), r['date'].replace('-', '.'), esc(r['media']) or '-'))
+    n_hit = sum(1 for it in items if region.regions(it['title']))
+    return svg, ('<ol class="rlist">%s</ol>' % li) if li else '<p class="note">제목에 지역명이 나온 기사 없음</p>', n_hit
+
+
 def pane(all_items, track, days, today):
     items, by_cat, top_cat = summarize(all_items, track, days, today)
-    tops = sorted(items, key=lambda x: (-x['score'], x['date']))[:5]
+    # 먼저 볼 기사 : 제목에 트랙 핵심어가 있는 기사를 우선, 모자라면 나머지로 채움
+    tops = sorted(items, key=lambda x: (not relevant(x, track), -x['score'], x['date']))[:5]
     today_s = today.strftime('%Y-%m-%d')
     n_today = sum(1 for r in all_items if (r.get('collected_at') or '')[:10] == today_s)
     tkey = 'med' if track == MED else 'wel'
@@ -353,7 +461,7 @@ def pane(all_items, track, days, today):
     o.write('<div class="grid">')
     # 왼쪽 : 먼저 볼 기사
     o.write('<section class="card"><div class="sec">LEAD</div><div class="h2">먼저 볼 기사</div>'
-            '<div class="cap">제도 · 리스크 · 발주처 관련성과 최신성으로 매긴 점수순</div>')
+            '<div class="cap">제목에 트랙 핵심어가 있는 기사 우선 · 제도 · 리스크 · 발주처 관련성과 최신성으로 매긴 점수순</div>')
     if tops:
         r = tops[0]
         chips = '<span class="chip">%s</span>' % esc(r['category'])
@@ -389,6 +497,27 @@ def pane(all_items, track, days, today):
             '<div class="cap">보도일 기준 · 단위 : 건 · 마지막 막대가 오늘</div>%s</section>'
             % daily_chart(all_items, today, ac))
     o.write('</div></div>')
+
+    # 핵심 이슈 순위 + 뜨는 키워드
+    rel = [r for r in items if relevant(r, track)]
+    sts = topic.stories(rel, 5)
+    prev_since = (today - timedelta(days=2 * days - 1)).strftime('%Y-%m-%d')
+    since = (today - timedelta(days=days - 1)).strftime('%Y-%m-%d')
+    prev = [r for r in all_items if prev_since <= r['date'] < since and relevant(r, track)]
+    o.write('<div class="grid g2">')
+    o.write('<section class="card"><div class="sec">ISSUES</div><div class="h2">이번 주 핵심 이슈 순위</div>'
+            '<div class="cap">트랙 핵심어가 들어간 기사 중 여러 매체가 함께 다룬 묶음 · 막대는 관련 기사 수(건) · 제목을 누르면 대표 기사</div>%s</section>'
+            % issue_rank(sts))
+    o.write('<section class="card"><div class="sec">KEYWORDS</div><div class="h2">뜨는 주제어</div>'
+            '<div class="cap">제목에 나온 주제어의 기사 수 · 최근 7일과 직전 7일 비교 · 단위 : 건</div>%s'
+            '<p class="note">같은 사건에서 함께 나오는 말은 하나만 남김</p></section>' % rising_table(topic.rising(rel, prev), len(prev), len(rel)))
+    o.write('</div>')
+
+    # 지역 타일맵
+    svg, rl, n_hit = region_card(rel, ac)
+    o.write('<section class="card g2"><div class="sec">REGION</div><div class="h2">지역별 보도</div>'
+            '<div class="cap">제목에 시도 · 시군명이 나온 기사 %s건 · 색이 진할수록 기사가 많음 · 단위 : 건</div>'
+            '<div class="reg"><div>%s</div><div>%s</div></div></section>' % (fmt(n_hit), svg, rl))
 
     # 범주별 목록
     o.write('<div class="cats">')
