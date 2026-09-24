@@ -23,7 +23,8 @@ DB = os.path.join(ROOT, 'data', 'news.db')
 
 GOOGLE_KO = 'https://news.google.com/rss/search?q={q}&hl=ko&gl=KR&ceid=KR:ko'
 GOOGLE_EN = 'https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en'
-NAVER = 'https://openapi.naver.com/v1/search/news.json?query={q}&display=100&sort=date'
+NAVER = 'https://openapi.naver.com/v1/search/news.json?query={q}&display=100&start={s}&sort=date'
+NAVER_MAX = 1000            # 네이버 검색 API 한도 : 한 번에 100건, start 최대 1,000 → 검색어당 최근 1,000건
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS news(
@@ -82,22 +83,31 @@ def fetch(url, headers=None, timeout=15):
         return r.read()
 
 
-def from_naver(track, q, since, cid, secret):
-    raw = fetch(NAVER.format(q=urllib.parse.quote(q)),
-                {'X-Naver-Client-Id': cid, 'X-Naver-Client-Secret': secret})
-    out = []
-    for e in json.loads(raw).get('items', []):
-        try:
-            d = parsedate_to_datetime(e['pubDate']).astimezone(KST)
-        except Exception:
-            continue
-        if d < since:
-            continue
-        url = e.get('originallink') or e.get('link')
-        media = urllib.parse.urlparse(url).netloc.replace('www.', '')
-        out.append({'track': track, 'title': clean(e.get('title')), 'url': url, 'media': media,
-                    'date': d.strftime('%Y-%m-%d'), 'summary': clean(e.get('description'))[:240],
-                    'source': 'naver'})
+def from_naver(track, q, since, cid, secret, limit=NAVER_MAX):
+    """최신순으로 100건씩 넘기며 수집 기간(since) 이전 기사가 나오거나 1,000건에 닿으면 멈춤"""
+    out, start = [], 1
+    while start <= min(limit, NAVER_MAX):
+        raw = fetch(NAVER.format(q=urllib.parse.quote(q), s=start),
+                    {'X-Naver-Client-Id': cid, 'X-Naver-Client-Secret': secret})
+        items = json.loads(raw).get('items', [])
+        old = False
+        for e in items:
+            try:
+                d = parsedate_to_datetime(e['pubDate']).astimezone(KST)
+            except Exception:
+                continue
+            if d < since:
+                old = True
+                continue
+            url = e.get('originallink') or e.get('link')
+            media = urllib.parse.urlparse(url).netloc.replace('www.', '')
+            out.append({'track': track, 'title': clean(e.get('title')), 'url': url, 'media': media,
+                        'date': d.strftime('%Y-%m-%d'), 'summary': clean(e.get('description'))[:240],
+                        'source': 'naver'})
+        if old or len(items) < 100:
+            break
+        start += 100
+        time.sleep(0.12)
     return out
 
 
@@ -209,6 +219,7 @@ def repair_titles(con, limit=250):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--days', type=int, default=3)
+    ap.add_argument('--max', type=int, default=NAVER_MAX, help='네이버 검색어당 최대 수집 건수(최대 1,000)')
     ap.add_argument('--seed', help='JSON 파일을 DB에 적재(초기 데이터 · 수작업 보강용)')
     ap.add_argument('--repair', type=int, default=250, help='한 번에 복원을 시도할 잘린 제목 수(0이면 건너뜀)')
     a = ap.parse_args()
@@ -228,7 +239,9 @@ def main():
         for q in cfg['ko']:
             if cid and secret:
                 try:
-                    got += from_naver(track, q.replace('"', ''), since, cid, secret)
+                    nv = from_naver(track, q.replace('"', ''), since, cid, secret, a.max)
+                    got += nv
+                    print('  네이버 %-24s %4d건' % (q, len(nv)))
                 except Exception as ex:
                     print('  네이버 실패 %s : %s' % (q, ex))
                 time.sleep(0.15)
