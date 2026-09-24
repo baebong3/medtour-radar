@@ -63,6 +63,11 @@ def upsert(con, it):
     cur = con.execute('SELECT 1 FROM news WHERE url=? AND track=?', (it['url'], it['track'])).fetchone()
     if cur:
         return 0
+    # 제목과 요약까지 같은 기사(통신사 전재 등)는 URL이 달라도 한 번만 저장
+    dup = con.execute('SELECT 1 FROM news WHERE track=? AND title=? AND IFNULL(summary,"")=?',
+                      (it['track'], it['title'], it.get('summary') or '')).fetchone()
+    if dup:
+        return 0
     con.execute('INSERT INTO news(url,track,title,media,date,summary,note,category,source,collected_at) '
                 'VALUES(?,?,?,?,?,?,?,?,?,?)',
                 (it['url'], it['track'], it['title'], it.get('media', ''), it['date'],
