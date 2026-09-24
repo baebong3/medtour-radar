@@ -1,0 +1,47 @@
+name: daily-radar
+
+on:
+  schedule:
+    - cron: '0 22 * * *'      # 매일 07:00 KST
+  workflow_dispatch:          # Actions 탭에서 수동 실행
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-radar
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install
+        run: pip install -r requirements.txt
+
+      - name: Collect
+        env:
+          NAVER_ID: ${{ secrets.NAVER_ID }}
+          NAVER_SECRET: ${{ secrets.NAVER_SECRET }}
+        run: python radar/collect.py --days 3
+
+      - name: Build page
+        run: python radar/build.py --days 7
+
+      - name: Commit
+        run: |
+          git config user.name  "medtour-radar-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/news.db docs/index.html
+          if git diff --cached --quiet; then
+            echo "변경 없음"
+          else
+            git commit -m "radar: $(TZ=Asia/Seoul date +%Y-%m-%d) 자동 갱신"
+            git push
+          fi
