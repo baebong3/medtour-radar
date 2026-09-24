@@ -3,7 +3,11 @@ name: daily-radar
 on:
   schedule:
     - cron: '0 22 * * *'      # 매일 07:00 KST
-  workflow_dispatch:          # Actions 탭에서 수동 실행
+  workflow_dispatch:          # Actions 탭에서 수동 실행 (기간을 늘려 과거 기사 보충 가능)
+    inputs:
+      days:
+        description: '수집 기간(일) - 평소 3, 과거 보충은 30'
+        default: '3'
 
 permissions:
   contents: write
@@ -29,7 +33,7 @@ jobs:
         env:
           NAVER_ID: ${{ secrets.NAVER_ID }}
           NAVER_SECRET: ${{ secrets.NAVER_SECRET }}
-        run: python radar/collect.py --days 3
+        run: python radar/collect.py --days ${{ github.event.inputs.days || '3' }}
 
       - name: Build page
         run: python radar/build.py --days 7
