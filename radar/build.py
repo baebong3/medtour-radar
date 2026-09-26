@@ -553,7 +553,7 @@ def main():
             '<img class="logo" src="assets/kto_signature.png" alt="한국관광공사">'
             '<span class="vr"></span>'
             '<div class="team"><span class="t1">%s</span><span class="t2">의료관광 · 웰니스 이슈 레이더</span></div>'
-            '<div class="upd"><b>%s 업데이트</b>매일 07:00 자동 갱신</div>'
+            '<div class="upd"><b>%s 업데이트</b></div>'
             '</div><div class="ribbon"><i></i><i></i><i></i><i></i></div></header>'
             % (TEAM, today.strftime('%Y.%m.%d %H:%M')))
     o.write('<div class="wrap">')
