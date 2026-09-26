@@ -112,6 +112,8 @@ a{color:inherit;text-decoration:none}
 .lead{border-bottom:1px solid var(--rule);padding:6px 0 18px}
 .chip{display:inline-block;font-size:11px;font-weight:700;border-radius:3px;padding:2px 7px;background:var(--tint);color:var(--ac-d)}
 .chip.hot{background:var(--ac);color:#fff}
+.chip.nwc{background:#0B7A4B;color:#fff}
+.nw{display:inline-block;vertical-align:2px;margin-right:6px;font-size:10.5px;font-weight:800;line-height:1;padding:3px 5px 2px;border-radius:3px;background:#0B7A4B;color:#fff;letter-spacing:0}
 .lead .tt{font-size:21px;font-weight:800;line-height:1.38;letter-spacing:-.6px;margin:8px 0 8px;word-break:keep-all}
 .lead .tt a:hover,.rest .tt a:hover,.ttab a:hover{color:var(--ac);text-decoration:underline}
 .lead .ts{color:var(--sub);font-size:13.5px;word-break:keep-all}
@@ -303,14 +305,25 @@ def daily_chart(items, today, ac, n=30, w=470, h=175):
     return o.getvalue()
 
 
+LATEST = ''   # 가장 최근 수집 회차의 날짜(KST, YYYY-MM-DD) - main()에서 채움
+
+
+def is_new(r):
+    return bool(LATEST) and (r.get('collected_at') or '')[:10] == LATEST
+
+
+def nb(r):
+    return '<span class="nw">신규</span>' if is_new(r) else ''
+
+
 def cat_table(key, rows):
     body = ''
     for i, r in enumerate(rows):
         body += ('<tr%s><td class="d" data-k="%s">%s</td><td class="md">%s</td>'
-                 '<td class="ti" data-k="%s"><a href="%s" target="_blank" rel="noopener">%s</a></td>'
+                 '<td class="ti" data-k="%s">%s<a href="%s" target="_blank" rel="noopener">%s</a></td>'
                  '<td class="sm">%s</td></tr>'
                  % (' class="ex"' if i >= SHOW else '', r['date'], r['date'][5:].replace('-', '.'),
-                    esc(r['media']) or '-', esc(r['title']), esc(r['url']), esc(r['title']),
+                    esc(r['media']) or '-', esc(r['title']), nb(r), esc(r['url']), esc(r['title']),
                     esc(r.get('note') or r.get('summary'))))
     rest = len(rows) - SHOW
     o = '<input class="more" type="checkbox" id="more-%s">' % key if rest > 0 else ''
@@ -423,9 +436,9 @@ def region_card(items, ac_hex):
     li = ''
     for sd, v in top:
         r = sorted(v, key=lambda x: (-x['score'], x['date']))[0]
-        li += ('<li><div class="rn">%s<small>%s건</small></div><div><div class="tt"><a href="%s" target="_blank" rel="noopener">%s</a></div>'
+        li += ('<li><div class="rn">%s<small>%s건</small></div><div><div class="tt">%s<a href="%s" target="_blank" rel="noopener">%s</a></div>'
                '<div class="meta">%s · <b>%s</b></div></div></li>'
-               % (sd, fmt(len(v)), esc(r['url']), esc(r['title']), r['date'].replace('-', '.'), esc(r['media']) or '-'))
+               % (sd, fmt(len(v)), nb(r), esc(r['url']), esc(r['title']), r['date'].replace('-', '.'), esc(r['media']) or '-'))
     n_hit = sum(1 for it in items if region.regions(it['title']))
     return svg, ('<ol class="rlist">%s</ol>' % li) if li else '<p class="note">제목에 지역명이 나온 기사 없음</p>', n_hit
 
@@ -435,7 +448,7 @@ def pane(all_items, track, days, today):
     # 먼저 볼 기사 : 제목에 트랙 핵심어가 있는 기사를 우선, 모자라면 나머지로 채움
     tops = sorted(items, key=lambda x: (not relevant(x, track), -x['score'], x['date']))[:5]
     today_s = today.strftime('%Y-%m-%d')
-    n_today = sum(1 for r in all_items if (r.get('collected_at') or '')[:10] == today_s)
+    n_today = sum(1 for r in all_items if is_new(r))
     tkey = 'med' if track == MED else 'wel'
     ac = '#D80024' if track == MED else '#E49000'
 
@@ -450,7 +463,7 @@ def pane(all_items, track, days, today):
             '<p class="dek">%s%s</p></section>'
             % (esc(TRACKS[track]['label']), today.strftime('%Y.%m.%d'), esc(head), basis, rep))
     kp = [(fmt(len(items)), '최근 %d일 기사' % days, '중복 기사 제외'),
-          (fmt(n_today), '오늘 수집', '이번 수집 회차'),
+          (fmt(n_today), '신규 수집', (LATEST[5:].replace('-', '.') + ' 수집 회차') if LATEST else '이번 수집 회차'),
           (fmt(len(all_items)), '누적 기사', '수집 시작 이후'),
           (fmt(len(by_cat)), '범주 수', '최다 : ' + (top_cat or '-')),
           (fmt(tops[0]['score']) if tops else '0', '최고 점수', '먼저 볼 기사 기준')]
@@ -467,15 +480,17 @@ def pane(all_items, track, days, today):
         chips = '<span class="chip">%s</span>' % esc(r['category'])
         if r['score'] >= 8:
             chips += ' <span class="chip hot">주목</span>'
+        if is_new(r):
+            chips += ' <span class="chip nwc">신규</span>'
         o.write('<div class="lead">%s<div class="tt"><a href="%s" target="_blank" rel="noopener">%s</a></div>'
                 '<div class="ts">%s</div><div class="meta">%s · <b>%s</b> · 점수 %s</div></div>'
                 % (chips, esc(r['url']), esc(r['title']), esc(r.get('note') or r.get('summary')),
                    r['date'].replace('-', '.'), esc(r['media']) or '-', fmt(r['score'])))
         o.write('<ol class="rest">')
         for i, r in enumerate(tops[1:], 2):
-            o.write('<li><span class="rk">%d</span><div><div class="tt"><a href="%s" target="_blank" rel="noopener">%s</a></div>'
+            o.write('<li><span class="rk">%d</span><div><div class="tt">%s<a href="%s" target="_blank" rel="noopener">%s</a></div>'
                     '<div class="meta">%s · <b>%s</b> · %s · 점수 %s</div></div></li>'
-                    % (i, esc(r['url']), esc(r['title']), r['date'].replace('-', '.'), esc(r['media']) or '-',
+                    % (i, nb(r), esc(r['url']), esc(r['title']), r['date'].replace('-', '.'), esc(r['media']) or '-',
                        esc(r['category']), fmt(r['score'])))
         o.write('</ol>')
     else:
@@ -522,10 +537,12 @@ def pane(all_items, track, days, today):
     # 범주별 목록
     o.write('<div class="cats">')
     for ci, (c, v) in enumerate(sorted(by_cat.items(), key=lambda kv: -len(kv[1]))):
-        v = sorted(v, key=lambda x: (-x['score'], x['date']))
-        o.write('<section class="card"><div class="sec">%s</div><div class="h2">%s<span class="n">%s건</span></div>'
-                '<div class="cap">관련도순 · 머리글을 누르면 일자 · 매체 · 제목순 정렬</div>%s</section>'
-                % (esc(TRACKS[track]['label']), esc(c), fmt(len(v)), cat_table('%s-%d' % (tkey, ci), v)))
+        v = sorted(v, key=lambda x: (not is_new(x), -x['score'], x['date']))
+        n_new = sum(1 for x in v if is_new(x))
+        o.write('<section class="card"><div class="sec">%s</div><div class="h2">%s<span class="n">%s건%s</span></div>'
+                '<div class="cap">신규 먼저, 그다음 관련도순 · 머리글을 누르면 일자 · 매체 · 제목순 정렬</div>%s</section>'
+                % (esc(TRACKS[track]['label']), esc(c), fmt(len(v)), (' · 신규 %s' % fmt(n_new)) if n_new else '',
+                   cat_table('%s-%d' % (tkey, ci), v)))
     o.write('</div>')
     return o.getvalue(), len(items), head
 
@@ -537,6 +554,8 @@ def main():
 
     con = sqlite3.connect(DB)
     today = datetime.now(KST)
+    global LATEST
+    LATEST = (con.execute('SELECT max(collected_at) FROM news').fetchone()[0] or '')[:10]
     med_html, n_med, med_head = pane(load(con, MED), MED, a.days, today)
     wel_html, n_wel, wel_head = pane(load(con, WEL), WEL, a.days, today)
 
