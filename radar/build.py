@@ -17,6 +17,7 @@ data/news.db → docs/index.html (GitHub Pages 공개 페이지)
   python radar/build.py
   python radar/build.py --days 14
 """
+import briefings
 import argparse, html, io, os, re, sqlite3, sys
 from datetime import datetime, timedelta
 
@@ -60,6 +61,8 @@ a{color:inherit;text-decoration:none}
 .team .t2{font-size:17px;font-weight:800;letter-spacing:-.4px}
 .mast .upd{margin-left:auto;text-align:right;font-size:12px;color:var(--muted);line-height:1.4}
 .mast .upd b{display:block;color:var(--ink);font-weight:600;font-size:13px}
+.mast .upd .brief{display:inline-block;margin-top:6px;background:#E49000;color:#fff;text-decoration:none;font-weight:800;font-size:13px;border-radius:8px;padding:6px 12px}
+.mast .upd .brief span{font-weight:600;font-size:11.5px;opacity:.9;margin-left:4px}
 .ribbon{display:flex;height:4px}
 .ribbon i{flex:1}
 .ribbon i:nth-child(1){background:var(--red)}.ribbon i:nth-child(2){background:var(--org)}
@@ -547,6 +550,14 @@ def pane(all_items, track, days, today):
     return o.getvalue(), len(items), head
 
 
+def brief_link():
+    """머리글 오른쪽 - 일일 이슈 브리핑 PDF 모음 링크"""
+    n, last, _ = briefings.summary()
+    if not n:
+        return ''
+    return ('<a class="brief" href="briefings/">일일 이슈 브리핑 PDF <span>%s건 · 최신 %s</span></a>' % (fmt(n), last))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--days', type=int, default=7)
@@ -572,9 +583,9 @@ def main():
             '<img class="logo" src="assets/kto_signature.png" alt="한국관광공사">'
             '<span class="vr"></span>'
             '<div class="team"><span class="t1">%s</span><span class="t2">의료관광 · 웰니스 이슈 레이더</span></div>'
-            '<div class="upd"><b>%s 업데이트</b></div>'
+            '<div class="upd"><b>%s 업데이트</b>%s</div>'
             '</div><div class="ribbon"><i></i><i></i><i></i><i></i></div></header>'
-            % (TEAM, today.strftime('%Y.%m.%d %H:%M')))
+            % (TEAM, today.strftime('%Y.%m.%d %H:%M'), brief_link()))
     o.write('<div class="wrap">')
     o.write('<div class="tabs"><label for="trk-med">의료관광 <small>%s건</small></label>'
             '<label for="trk-wel">웰니스 <small>%s건</small></label></div>' % (fmt(n_med), fmt(n_wel)))
@@ -584,6 +595,7 @@ def main():
             '점수는 편집 판단을 돕는 보조 지표임</span></footer>' % TEAM)
     o.write('</div>' + SORT_JS + '</body></html>')
 
+    briefings.build()
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     open(OUT, 'w', encoding='utf-8').write(o.getvalue().replace('—', '-').replace('–', '-'))
     print('생성 : %s (의료관광 %d건 · 웰니스 %d건)' % (OUT, n_med, n_wel))
