@@ -72,7 +72,8 @@ def headlines(it):
         cache = {}
     changed = False
     for _, f, _sz in it:
-        if f not in cache:
+        if not cache.get(f):
+            # 값이 비어 있으면(추출 실패 또는 PDF 교체 전 캐시) 다시 읽음
             cache[f] = extract(os.path.join(DIR, f))
             changed = True
     names = {f for _, f, _sz in it}
