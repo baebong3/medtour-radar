@@ -446,10 +446,27 @@ def region_card(items, ac_hex):
     return svg, ('<ol class="rlist">%s</ol>' % li) if li else '<p class="note">제목에 지역명이 나온 기사 없음</p>', n_hit
 
 
+def pick_tops(cands, n, overlap=2):
+    """우선순위 순으로 훑으며, 이미 고른 기사와 제목 핵심어가 overlap개 이상 겹치면 건너뜀"""
+    def stems(title):
+        # 낱말 앞 2글자로 비교 - 「인천관광공사 · 인천」, 「공모전 · 공모합니다」처럼 형태만 다른 같은 말도 겹침으로 봄
+        return {w[:2] for w in topic.tokens(title) if len(w) >= 2}
+    out, toks = [], []
+    for it in cands:
+        tk = stems(it['title'])
+        if any(len(tk & t) >= overlap for t in toks):
+            continue
+        out.append(it); toks.append(tk)
+        if len(out) == n:
+            break
+    return out
+
+
 def pane(all_items, track, days, today):
     items, by_cat, top_cat = summarize(all_items, track, days, today)
     # 먼저 볼 기사 : 제목에 트랙 핵심어가 있는 기사를 우선, 모자라면 나머지로 채움
-    tops = sorted(items, key=lambda x: (not relevant(x, track), -x['score'], x['date']))[:5]
+    #   제목 핵심어(일반어 제외, topic.tokens)가 2개 이상 겹치는 기사는 같은 내용으로 보고 우선순위가 높은 1건만 남김
+    tops = pick_tops(sorted(items, key=lambda x: (not relevant(x, track), -x['score'], x['date'])), 5)
     today_s = today.strftime('%Y-%m-%d')
     n_today = sum(1 for r in all_items if is_new(r))
     tkey = 'med' if track == MED else 'wel'
@@ -477,7 +494,7 @@ def pane(all_items, track, days, today):
     o.write('<div class="grid">')
     # 왼쪽 : 먼저 볼 기사
     o.write('<section class="card"><div class="sec">LEAD</div><div class="h2">먼저 볼 기사</div>'
-            '<div class="cap">제목에 트랙 핵심어가 있는 기사 우선 · 제도 · 리스크 · 발주처 관련성과 최신성으로 매긴 점수순</div>')
+            '<div class="cap">제목에 트랙 핵심어가 있는 기사 우선 · 제도 · 리스크 · 발주처 관련성과 최신성으로 매긴 점수순 · 제목 핵심어가 2개 이상 겹치는 같은 내용은 1건만</div>')
     if tops:
         r = tops[0]
         chips = '<span class="chip">%s</span>' % esc(r['category'])
